@@ -10,9 +10,9 @@ from supabase import create_client, Client
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Supabase configuration
-SUPABASE_URL = "https://vtgroxrnoderuusrgfye.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0Z3JveHJub2RlcnV1c3JnZnllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2NjcyNTUsImV4cCI6MjA5NjI0MzI1NX0.Njl0LYQj1WESievYvbbr8hZDXF5cBj2tsX65dH0d77k"
+# Supabase configuration - YOUR NEW PROJECT
+SUPABASE_URL = "https://qhjkcrqbshnlmvmnhqzn.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFoamtjcnFic2hubG12bW5ocXpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzNzU5NzEsImV4cCI6MjA5Njk1MTk3MX0.Ke34mKAgL2Zr8xImhhiiOKbrbAym1UAXLBo4KqPyWDo"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -30,13 +30,21 @@ class Pi:
     
     def get_memories(self):
         """Fetch all memories for this user from Supabase"""
-        response = supabase.table("Memories").select("*").eq("user_id", self.user_id).execute()
-        return response.data if response.data else []
+        try:
+            response = supabase.table("Memories").select("*").eq("user_id", self.user_id).execute()
+            return response.data if response.data else []
+        except Exception as e:
+            print(f"Error fetching memories: {e}")
+            return []
     
     def save_memory(self, memory_data):
         """Save a memory to Supabase"""
-        response = supabase.table("Memories").insert(memory_data).execute()
-        return response.data[0] if response.data else None
+        try:
+            response = supabase.table("Memories").insert(memory_data).execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            print(f"Error saving memory: {e}")
+            return None
     
     def find_best_match(self, input_text):
         input_keywords = self.tokenize(input_text)
@@ -103,6 +111,68 @@ class Pi:
 
 active_ais = {}
 
+def get_ai(user_id):
+    if user_id not in active_ais:
+        active_ais[user_id] = Pi(user_id)
+    return active_ais[user_id]
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id', 'default')
+        message = data.get('message', '').strip()
+        
+        if not message:
+            return jsonify({"error": "Message is empty"}), 400
+        
+        ai = get_ai(user_id)
+        response, action = ai.respond(message)
+        
+        return jsonify({
+            "response": response,
+            "action": action,
+            "stats": ai.get_stats()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/learn', methods=['POST'])
+def learn():
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id', 'default')
+        fact = data.get('fact', '').strip()
+        
+        if not fact:
+            return jsonify({"error": "Fact is empty"}), 400
+        
+        ai = get_ai(user_id)
+        result = ai.learn(fact)
+        
+        return jsonify({
+            "message": result,
+            "stats": ai.get_stats()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/stats', methods=['GET'])
+def stats():
+    user_id = request.args.get('user_id', 'default')
+    ai = get_ai(user_id)
+    return jsonify(ai.get_stats())
+
+@app.route('/')
+def home():
+    return jsonify({
+        "name": "Pi",
+        "description": "An AI that learns like nature",
+        "endpoints": ["POST /chat", "POST /learn", "GET /stats"]
+    })
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
 def get_ai(user_id):
     if user_id not in active_ais:
         active_ais[user_id] = Pi(user_id)
