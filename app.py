@@ -1,50 +1,50 @@
-# app.py
-# Pi - An AI that learns like nature
-# Built on Project Instinct research
+# app.py - Pi with Supabase persistent memory
 
 import json
 import os
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from supabase import create_client, Client
+
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+# Supabase configuration
+SUPABASE_URL = "https://vtgroxrnoderuusrgfye.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0Z3JveHJub2RlcnV1c3JnZnllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2NjcyNTUsImV4cCI6MjA5NjI0MzI1NX0.Njl0LYQj1WESievYvbbr8hZDXF5cBj2tsX65dH0d77k"
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ============================================================
-# THE AI CORE
+# PI AI CLASS WITH SUPABASE STORAGE
 # ============================================================
 
 class Pi:
-    """Curiosity-driven AI with persistent memory"""
-    
     def __init__(self, user_id="default"):
         self.user_id = user_id
-        self.memory_file = f"memory_{user_id}.json"
-        self.memory = self.load_memory()
-        self.curiosity = 0.5
-    
-    def load_memory(self):
-        """Load memories from JSON file"""
-        if os.path.exists(self.memory_file):
-            with open(self.memory_file, "r") as f:
-                return json.load(f)
-        return []
-    
-    def save_memory(self):
-        """Save memories to JSON file"""
-        with open(self.memory_file, "w") as f:
-            json.dump(self.memory, f, indent=2)
     
     def tokenize(self, text):
-        """Convert text to keywords"""
         words = text.lower().replace(".", "").replace("?", "").replace("!", "").split()
         return set(words)
     
+    def get_memories(self):
+        """Fetch all memories for this user from Supabase"""
+        response = supabase.table("Memories").select("*").eq("user_id", self.user_id).execute()
+        return response.data if response.data else []
+    
+    def save_memory(self, memory_data):
+        """Save a memory to Supabase"""
+        response = supabase.table("Memories").insert(memory_data).execute()
+        return response.data[0] if response.data else None
+    
     def find_best_match(self, input_text):
-        """Find most similar memory using keyword overlap"""
         input_keywords = self.tokenize(input_text)
+        memories = self.get_memories()
         best_match = None
         best_score = 0
         
-        for mem in self.memory:
+        for mem in memories:
             mem_keywords = set(mem.get("keywords", []))
             overlap = len(input_keywords & mem_keywords)
             if overlap > best_score:
@@ -54,55 +54,117 @@ class Pi:
         return best_match, best_score
     
     def update_curiosity(self, best_score):
-        """Curiosity rises when no good match exists"""
         if best_score == 0:
-            self.curiosity = min(0.95, self.curiosity + 0.3)
+            return 0.95
         elif best_score < 2:
-            self.curiosity = min(0.7, self.curiosity + 0.1)
+            return 0.7
         else:
-            self.curiosity = max(0.1, self.curiosity - 0.2)
-        return self.curiosity
+            return 0.2
     
     def learn(self, fact, source="user"):
-        """Store a new memory and connect to related ones"""
-        new_memory = {
-            "id": len(self.memory) + 1,
-            "fact": fact,
-            "keywords": list(self.tokenize(fact)),
-            "timestamp": datetime.now().isoformat(),
+        keywords = list(self.tokenize(fact))
+        memory_data = {
+            "user_id": self.user_id,
+            "input": fact,
+            "keywords": keywords,
+            "concepts": keywords[:3],
+            "timestamp": int(datetime.now().timestamp() * 1000),
+            "confidence": 0.7,
             "source": source,
             "connections": []
         }
-        self.memory.append(new_memory)
-        self.connect_related(new_memory["id"])
-        self.save_memory()
+        self.save_memory(memory_data)
         return f"I learned: {fact}"
     
-    def connect_related(self, new_id):
-        """Auto-connect new memory to existing related memories"""
-        new_mem = self.memory[new_id - 1]
-        new_keywords = set(new_mem["keywords"])
-        
-        for existing in self.memory:
-            if existing["id"] == new_id:
-                continue
-            existing_keywords = set(existing.get("keywords", []))
-            if len(new_keywords & existing_keywords) > 0:
-                if new_id not in existing.get("connections", []):
-                    existing.setdefault("connections", []).append(new_id)
-                if existing["id"] not in new_mem["connections"]:
-                    new_mem["connections"].append(existing["id"])
-        
-        self.save_memory()
-    
     def respond(self, user_input):
-        """Generate response based on memory and curiosity"""
         best_match, score = self.find_best_match(user_input)
-        self.update_curiosity(score)
+        curiosity = self.update_curiosity(score)
         
-        if self.curiosity > 0.7:
+        if curiosity > 0.7:
             return f"I don't know about '{user_input}'. Can you teach me?", "learn"
         elif best_match:
+            return f"I remember: {best_match['input']}", "recall"
+        else:
+            return f"I'm not sure. Tell me more.", "probe"
+    
+    def get_stats(self):
+        memories = self.get_memories()
+        return {
+            "memories": len(memories),
+            "curiosity": 0.5,
+            "curiosity_label": "🧠 curious",
+            "connections": 0
+        }
+
+
+# ============================================================
+# FLASK ROUTES
+# ============================================================
+
+active_ais = {}
+
+def get_ai(user_id):
+    if user_id not in active_ais:
+        active_ais[user_id] = Pi(user_id)
+    return active_ais[user_id]
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id', 'default')
+        message = data.get('message', '').strip()
+        
+        if not message:
+            return jsonify({"error": "Message is empty"}), 400
+        
+        ai = get_ai(user_id)
+        response, action = ai.respond(message)
+        
+        return jsonify({
+            "response": response,
+            "action": action,
+            "stats": ai.get_stats()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/learn', methods=['POST'])
+def learn():
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id', 'default')
+        fact = data.get('fact', '').strip()
+        
+        if not fact:
+            return jsonify({"error": "Fact is empty"}), 400
+        
+        ai = get_ai(user_id)
+        result = ai.learn(fact)
+        
+        return jsonify({
+            "message": result,
+            "stats": ai.get_stats()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/stats', methods=['GET'])
+def stats():
+    user_id = request.args.get('user_id', 'default')
+    ai = get_ai(user_id)
+    return jsonify(ai.get_stats())
+
+@app.route('/')
+def home():
+    return jsonify({
+        "name": "Pi",
+        "description": "An AI that learns like nature",
+        "endpoints": ["POST /chat", "POST /learn", "GET /stats"]
+    })
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)        elif best_match:
             return f"I remember: {best_match['fact']}", "recall"
         else:
             return f"I'm not sure. Tell me more.", "probe"
