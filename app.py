@@ -1,10 +1,10 @@
-# app.py - Pi with Supabase persistent memory
+# app.py - Pi with direct Supabase REST API
 
 import os
+import requests
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from supabase import create_client, Client
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -13,7 +13,11 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 SUPABASE_URL = "https://qhjkcrqbshnlmvmnhqzn.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFoamtjcnFic2hubG12bW5ocXpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzNzU5NzEsImV4cCI6MjA5Njk1MTk3MX0.Ke34mKAgL2Zr8xImhhiiOKbrbAym1UAXLBo4KqPyWDo"
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+}
 
 
 class Pi:
@@ -26,19 +30,26 @@ class Pi:
     
     def get_memories(self):
         try:
-            response = supabase.table("Memories").select("*").eq("user_id", self.user_id).execute()
-            return response.data if response.data else []
+            url = f"{SUPABASE_URL}/rest/v1/Memories?user_id=eq.{self.user_id}&select=*"
+            response = requests.get(url, headers=HEADERS)
+            if response.status_code == 200:
+                return response.json()
+            return []
         except Exception as e:
             print(f"Error fetching memories: {e}")
             return []
     
     def save_memory(self, memory_data):
         try:
-            response = supabase.table("Memories").insert(memory_data).execute()
-            return response.data[0] if response.data else None
+            url = f"{SUPABASE_URL}/rest/v1/Memories"
+            response = requests.post(url, headers=HEADERS, json=memory_data)
+            if response.status_code in [200, 201]:
+                return True
+            print(f"Save failed: {response.status_code} - {response.text}")
+            return False
         except Exception as e:
             print(f"Error saving memory: {e}")
-            return None
+            return False
     
     def find_best_match(self, input_text):
         input_keywords = self.tokenize(input_text)
@@ -76,8 +87,8 @@ class Pi:
             "source": source,
             "connections": []
         }
-        result = self.save_memory(memory_data)
-        if result:
+        success = self.save_memory(memory_data)
+        if success:
             return f"I learned: {fact}"
         else:
             return "Sorry, I couldn't save that memory."
@@ -103,7 +114,6 @@ class Pi:
         }
 
 
-# Flask routes
 active_ais = {}
 
 def get_ai(user_id):
